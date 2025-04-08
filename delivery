@@ -1,0 +1,529 @@
+grocery-ai/
+├── backend/                # Core server and AI
+│   ├── api/                # FastAPI endpoints
+│   ├── ai_engine/          # Machine learning models
+│   ├── services/           # Business logic
+│   ├── models/             # Database models
+│   └── integrations/       # Store APIs
+├── frontend/
+│   ├── customer-app/       # Flutter mobile app
+│   ├── admin-panel/        # React.js dashboard
+│   ├── driver-app/         # React Native app
+│   └── vendor-portal/      # Vue.js interface
+├── devops/
+│   ├── docker/             # Container configs
+│   ├── k8s/                # Kubernetes configs
+│   └── scripts/            # Deployment scripts
+└── database/               # PostgreSQL schemas
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from database import engine, Base
+import models
+from routers import (
+    auth, products, orders, 
+    users, ai, payments,
+    inventory, delivery
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize on startup
+    Base.metadata.create_all(bind=engine)
+    await ai.initialize_models()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
+# CORS Configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include all routers
+app.include_router(auth.router)
+app.include_router(products.router)
+app.include_router(orders.router)
+# ... other routers ...
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+import numpy as np
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from surprise import Dataset, KNNBasic
+import tensorflow as tf
+from tensorflow.keras.layers import Input, Embedding, Flatten, Dot, Dense
+from tensorflow.keras.models import Model
+import joblib
+
+class GroceryAI:
+    def __init__(self):
+        self.product_vectorizer = None
+        self.recommendation_model = None
+        self.price_model = None
+        self.demand_forecaster = None
+    
+    async def initialize(self):
+        """Load or train all models"""
+        self._load_product_similarity_model()
+        self._load_recommendation_model()
+        self._load_price_model()
+        self._load_demand_forecaster()
+    
+    def _load_product_similarity_model(self):
+        try:
+            self.product_vectorizer = joblib.load('models/tfidf_vectorizer.pkl')
+        except:
+            # Initialize new model
+            self.product_vectorizer = TfidfVectorizer(stop_words='english')
+    
+    def _load_recommendation_model(self):
+        try:
+            self.recommendation_model = joblib.load('models/collab_filter.pkl')
+        except:
+            # Initialize empty model
+            self.recommendation_model = KNNBasic(sim_options={
+                'name': 'cosine',
+                'user_based': False
+            })
+    
+    # ... other model loading methods ...
+    
+    def recommend_products(self, user_id, context):
+        """Generate personalized recommendations"""
+        # 1. Get collaborative filtering predictions
+        cf_preds = self._get_cf_recommendations(user_id)
+        
+        # 2. Apply contextual filters
+        filtered = self._apply_context_filters(cf_preds, context)
+        
+        # 3. Rank results
+        ranked = self._rank_products(filtered, user_id)
+        
+        return ranked[:10]
+    
+    # ... other AI methods ...
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON, ForeignKey
+from sqlalchemy.orm import relationship
+from database import Base
+
+class User(Base):
+    __tablename__ = 'users'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    role = Column(String)  # 'customer', 'driver', 'vendor', 'admin'
+    is_active = Column(Boolean, default=True)
+    preferences = Column(JSON)  # Dietary preferences, favorites
+    
+    orders = relationship("Order", back_populates="user")
+
+class Product(Base):
+    __tablename__ = 'products'
+    
+    id = Column(String, primary_key=True)  # Format: store_upc
+    name = Column(String)
+    description = Column(String)
+    category = Column(String)
+    price = Column(Float)
+    image_url = Column(String)
+    store_source = Column(String)
+    nutritional_info = Column(JSON)
+    ai_embeddings = Column(JSON)  # Stored vector embeddings
+    
+    inventory = relationship("Inventory", back_populates="product")
+
+class Order(Base):
+    __tablename__ = 'orders'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    status = Column(String)  # 'pending', 'preparing', 'shipped', etc.
+    created_at = Column(DateTime)
+    items = Column(JSON)  # Serialized order items
+    delivery_address = Column(JSON)
+    ai_recommended = Column(Boolean)  # If AI suggested items
+    
+    user = relationship("User", back_populates="orders")
+    delivery = relationship("Delivery", back_populates="order")
+
+# ... additional models for Inventory, Delivery, Payments, etc. ...
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'screens/home.dart';
+import 'screens/search.dart';
+import 'screens/cart.dart';
+import 'screens/orders.dart';
+import 'providers/auth.dart';
+import 'providers/cart.dart';
+import 'providers/products.dart';
+
+void main() {
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => ProductsProvider()),
+        ChangeNotifierProvider(create: (_) => CartProvider()),
+      ],
+      child: const GroceryApp(),
+    ),
+  );
+}
+
+class GroceryApp extends StatelessWidget {
+  const GroceryApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'AI Grocery Delivery',
+      theme: ThemeData(
+        primarySwatch: Colors.green,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      home: Consumer<AuthProvider>(
+        builder: (ctx, auth, _) => auth.isAuth ? HomeScreen() : AuthScreen(),
+      ),
+      routes: {
+        SearchScreen.routeName: (ctx) => SearchScreen(),
+        CartScreen.routeName: (ctx) => CartScreen(),
+        OrdersScreen.routeName: (ctx) => OrdersScreen(),
+      },
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/products.dart';
+import '../widgets/product_item.dart';
+
+class SearchScreen extends StatefulWidget {
+  static const routeName = '/search';
+  
+  @override
+  _SearchScreenState createState() => _SearchScreenState();
+}
+
+class _SearchScreenState extends State<SearchScreen> {
+  final _searchController = TextEditingController();
+  bool _isLoading = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    // Load initial recommendations
+    _loadRecommendations();
+  }
+  
+  Future<void> _loadRecommendations() async {
+    setState(() => _isLoading = true);
+    await Provider.of<ProductsProvider>(context, listen: false)
+        .fetchRecommendedProducts();
+    setState(() => _isLoading = false);
+  }
+  
+  Future<void> _searchProducts() async {
+    if (_searchController.text.isEmpty) return;
+    
+    setState(() => _isLoading = true);
+    await Provider.of<ProductsProvider>(context, listen: false)
+        .searchProducts(_searchController.text);
+    setState(() => _isLoading = false);
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    final productsData = Provider.of<ProductsProvider>(context);
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            hintText: 'Search groceries...',
+            suffixIcon: IconButton(
+              icon: Icon(Icons.search),
+              onPressed: _searchProducts,
+            ),
+          ),
+          onSubmitted: (_) => _searchProducts(),
+        ),
+      ),
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : productsData.products.isEmpty
+              ? Center(child: Text('No products found'))
+              : GridView.builder(
+                  padding: EdgeInsets.all(10),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    childAspectRatio: 3/4,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                  ),
+                  itemCount: productsData.products.length,
+                  itemBuilder: (ctx, i) => ProductItem(
+                    productsData.products[i],
+                    key: ValueKey(productsData.products[i].id),
+                  ),
+                ),
+    );
+  }
+}
+import React, { useState, useEffect } from 'react';
+import { 
+  LineChart, BarChart, PieChart,
+  Line, Bar, Pie, XAxis, YAxis, 
+  CartesianGrid, Tooltip, Legend 
+} from 'recharts';
+import { 
+  Container, Row, Col, 
+  Card, CardBody, CardHeader,
+  Form, FormGroup, Label, Input
+} from 'reactstrap';
+import api from '../api';
+
+const Dashboard = () => {
+  const [stats, setStats] = useState(null);
+  const [timeRange, setTimeRange] = useState('week');
+  const [loading, setLoading] = useState(true);
+  
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const response = await api.get(`/admin/stats?range=${timeRange}`);
+        setStats(response.data);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchData();
+  }, [timeRange]);
+  
+  if (loading) return <div>Loading...</div>;
+  
+  return (
+    <Container fluid>
+      <Row className="mb-4">
+        <Col md={12}>
+          <h2>AI Grocery Dashboard</h2>
+          <Form inline>
+            <FormGroup>
+              <Label for="timeRange" className="mr-2">Time Range:</Label>
+              <Input
+                type="select"
+                id="timeRange"
+                value={timeRange}
+                onChange={(e) => setTimeRange(e.target.value)}
+              >
+                <option value="day">Today</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+              </Input>
+            </FormGroup>
+          </Form>
+        </Col>
+      </Row>
+      
+      <Row>
+        <Col md={4}>
+          <Card>
+            <CardHeader>Total Orders</CardHeader>
+            <CardBody>
+              <h3>{stats.total_orders}</h3>
+              <LineChart
+                width={300}
+                height={200}
+                data={stats.order_trends}
+              >
+                <Line type="monotone" dataKey="orders" stroke="#8884d8" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+              </LineChart>
+            </CardBody>
+          </Card>
+        </Col>
+        
+        <Col md={4}>
+          <Card>
+            <CardHeader>AI Recommendations</CardHeader>
+            <CardBody>
+              <h3>{stats.ai_conversion_rate}%</h3>
+              <p>Conversion Rate</p>
+              <BarChart
+                width={300}
+                height={200}
+                data={stats.ai_performance}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="category" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="conversion" fill="#82ca9d" />
+              </BarChart>
+            </CardBody>
+          </Card>
+        </Col>
+        
+        <Col md={4}>
+          <Card>
+            <CardHeader>Inventory Status</CardHeader>
+            <CardBody>
+              <PieChart width={300} height={200}>
+                <Pie
+                  data={stats.inventory_status}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                  nameKey="name"
+                  label
+                />
+                <Tooltip />
+              </PieChart>
+            </CardBody>
+          </Card>
+        </Col>
+      </Row>
+      
+      {/* Additional analytics sections */}
+    </Container>
+  );
+};
+
+export default Dashboard;
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - AI_MODELS_PATH=/app/models
+    volumes:
+      - ../backend:/app
+      - ai_models:/app/models
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:6
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  frontend:
+    build:
+      context: ../frontend/customer-app
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    depends_on:
+      - backend
+
+  admin-panel:
+    build:
+      context: ../frontend/admin-panel
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://backend:8000
+
+volumes:
+  postgres_data:
+  redis_data:
+  ai_models:
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: your-registry/grocery-ai-backend:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DB_HOST
+          value: "postgres"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: password
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+# Backend/.env
+DB_HOST=postgres
+DB_USER=admin
+DB_PASSWORD=securepassword
+DB_NAME=grocerydb
+REDIS_HOST=redis
+JWT_SECRET=yoursupersecretkey
+docker-compose build
+docker-compose up
+docker-compose exec backend python -m ai_engine.train
